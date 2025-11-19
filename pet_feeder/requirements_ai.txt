@@ -1,0 +1,33 @@
+# AI/ML Requirements for Pet Feeder System
+
+# Deep Learning
+tensorflow==2.15.0
+keras==2.15.0
+
+# Machine Learning
+scikit-learn==1.3.2
+scipy==1.11.4
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Time Series
+statsmodels==0.14.1
+
+# Plotting and Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+
+# Model Persistence
+joblib==1.3.2
+pickle5==0.0.11
+
+# Feature Engineering
+category-encoders==2.6.3
+
+# Hyperparameter Tuning
+optuna==3.5.0
+
+# Progress Bars
+tqdm==4.66.1

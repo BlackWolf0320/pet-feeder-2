@@ -1,3 +1,9 @@
+"""
+Pet Feeder App - NO MQTT VERSION
+Run this if you don't have Mosquitto installed
+This version works with API-only (no IoT communication)
+"""
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
@@ -5,7 +11,6 @@ from database import (
     init_db, get_session, Pet, FeedingEvent, 
     HealthMetric, DeviceStatus, Alert, FeedingSchedule
 )
-from mqtt_client import PetFeederMQTTClient
 from data_processor import DataProcessor
 import logging
 from sqlalchemy import func, desc
@@ -20,26 +25,14 @@ CORS(app)
 engine = init_db()
 db_session = get_session(engine)
 
-# Initialize MQTT client
-mqtt_client = PetFeederMQTTClient()
+# Initialize data processor
 data_processor = DataProcessor(db_session)
 
-# MQTT message handler
-def handle_mqtt_message(topic, payload):
-    """Route MQTT messages to appropriate processor"""
-    try:
-        if 'rfid/detected' in topic:
-            data_processor.process_rfid_detection(payload)
-        elif 'sensor/weight' in topic:
-            data_processor.process_weight_sensor(payload)
-        elif 'dispenser/status' in topic:
-            data_processor.process_dispenser_status(payload)
-        elif 'device/status' in topic:
-            data_processor.process_device_status(payload)
-    except Exception as e:
-        logger.error(f"Error handling MQTT message: {e}")
-
-mqtt_client.set_data_handler(handle_mqtt_message)
+logger.warning("=" * 60)
+logger.warning("RUNNING IN NO-MQTT MODE")
+logger.warning("IoT features disabled - API-only mode")
+logger.warning("Use manual feeding and simulator with direct API calls")
+logger.warning("=" * 60)
 
 # ==================== PET MANAGEMENT ENDPOINTS ====================
 
@@ -92,7 +85,6 @@ def get_pet(pet_id):
     if not pet:
         return jsonify({'error': 'Pet not found'}), 404
     
-    # Get recent feeding stats
     week_ago = datetime.utcnow() - timedelta(days=7)
     recent_feedings = db_session.query(FeedingEvent)\
         .filter(FeedingEvent.pet_id == pet_id, FeedingEvent.timestamp >= week_ago)\
@@ -139,7 +131,7 @@ def update_pet(pet_id):
 
 @app.route('/api/feeding/manual', methods=['POST'])
 def manual_dispense():
-    """Manually trigger food dispensing"""
+    """Manually trigger food dispensing (simulated without MQTT)"""
     data = request.json
     pet_id = data.get('pet_id')
     amount = data.get('amount', 100)
@@ -148,14 +140,14 @@ def manual_dispense():
     if not pet:
         return jsonify({'error': 'Pet not found'}), 404
     
-    # Send MQTT command to dispenser
-    command = mqtt_client.publish_dispense_command(pet_id, amount)
-    
-    # Create feeding event
+    # Create feeding event (simulated)
     feeding_event = FeedingEvent(
         pet_id=pet_id,
         timestamp=datetime.utcnow(),
         amount_dispensed=amount,
+        amount_consumed=amount * 0.9,  # Simulate 90% consumption
+        eating_duration=180,  # Simulate 3 minutes
+        completion_rate=90.0,
         is_manual_dispense=True,
         is_scheduled=False
     )
@@ -163,13 +155,64 @@ def manual_dispense():
     db_session.add(feeding_event)
     db_session.commit()
     
-    logger.info(f"Manual dispense triggered: {amount}g for {pet.name}")
+    logger.info(f"Manual dispense (simulated): {amount}g for {pet.name}")
     
     return jsonify({
-        'message': 'Dispensing food',
+        'message': 'Feeding simulated (no MQTT available)',
         'amount': amount,
-        'feeding_event_id': feeding_event.id
+        'feeding_event_id': feeding_event.id,
+        'note': 'MQTT disabled - this is a simulated feeding'
     })
+
+@app.route('/api/feeding/simulate', methods=['POST'])
+def simulate_feeding():
+    """Simulate a complete feeding event (for testing without hardware)"""
+    data = request.json
+    
+    pet_id = data.get('pet_id')
+    amount_dispensed = data.get('amount_dispensed', 150)
+    amount_consumed = data.get('amount_consumed', amount_dispensed * 0.9)
+    eating_duration = data.get('eating_duration', 180)
+    
+    pet = db_session.query(Pet).filter_by(id=pet_id).first()
+    if not pet:
+        return jsonify({'error': 'Pet not found'}), 404
+    
+    # Calculate time since last meal
+    last_feeding = db_session.query(FeedingEvent)\
+        .filter_by(pet_id=pet_id)\
+        .order_by(FeedingEvent.timestamp.desc())\
+        .first()
+    
+    time_since_last_meal = None
+    if last_feeding:
+        time_diff = datetime.utcnow() - last_feeding.timestamp
+        time_since_last_meal = int(time_diff.total_seconds() / 60)
+    
+    # Create feeding event
+    feeding_event = FeedingEvent(
+        pet_id=pet_id,
+        timestamp=datetime.utcnow(),
+        amount_dispensed=amount_dispensed,
+        amount_consumed=amount_consumed,
+        eating_duration=eating_duration,
+        time_since_last_meal=time_since_last_meal,
+        completion_rate=(amount_consumed / amount_dispensed) * 100 if amount_dispensed > 0 else 0,
+        is_manual_dispense=True,
+        is_scheduled=False
+    )
+    
+    db_session.add(feeding_event)
+    db_session.commit()
+    
+    logger.info(f"Simulated feeding for {pet.name}: {amount_consumed}g consumed")
+    
+    return jsonify({
+        'message': 'Feeding event created',
+        'feeding_event_id': feeding_event.id,
+        'pet_name': pet.name,
+        'completion_rate': feeding_event.completion_rate
+    }), 201
 
 @app.route('/api/feeding/history/<int:pet_id>', methods=['GET'])
 def get_feeding_history(pet_id):
@@ -218,7 +261,7 @@ def add_schedule(pet_id):
     
     schedule = FeedingSchedule(
         pet_id=pet_id,
-        scheduled_time=data['scheduled_time'],  # Format: "08:00"
+        scheduled_time=data['scheduled_time'],
         food_amount=data['food_amount']
     )
     
@@ -227,7 +270,8 @@ def add_schedule(pet_id):
     
     return jsonify({
         'message': 'Schedule added successfully',
-        'schedule_id': schedule.id
+        'schedule_id': schedule.id,
+        'note': 'MQTT disabled - schedules will not trigger automatically'
     }), 201
 
 # ==================== ANALYTICS ENDPOINTS ====================
@@ -242,7 +286,6 @@ def get_daily_analytics(pet_id):
     else:
         target_date = datetime.utcnow().date()
     
-    # Calculate or retrieve metrics
     metric = data_processor.calculate_daily_metrics(pet_id, target_date)
     
     if not metric:
@@ -319,235 +362,6 @@ def mark_alert_read(alert_id):
     
     return jsonify({'message': 'Alert marked as read'})
 
-# ==================== DEVICE STATUS ENDPOINTS ====================
-
-@app.route('/api/device/status', methods=['GET'])
-def get_device_status():
-    """Get current device status"""
-    latest_status = db_session.query(DeviceStatus)\
-        .order_by(desc(DeviceStatus.timestamp))\
-        .first()
-    
-    if not latest_status:
-        return jsonify({'error': 'No device status available'}), 404
-    
-    return jsonify({
-        'timestamp': latest_status.timestamp.isoformat(),
-        'food_level': latest_status.food_level,
-        'dispenser_status': latest_status.dispenser_status,
-        'rfid_reader_status': latest_status.rfid_reader_status,
-        'weight_sensor_status': latest_status.weight_sensor_status,
-        'temperature': latest_status.temperature,
-        'humidity': latest_status.humidity,
-        'wifi_signal_strength': latest_status.wifi_signal_strength
-    })
-
-# ==================== AI ENDPOINTS ====================
-
-from ai_manager import AIManager
-
-# Initialize AI Manager
-ai_manager = AIManager(db_session)
-
-@app.route('/api/ai/readiness', methods=['GET'])
-def check_ai_readiness():
-    """Check if enough data is available for AI training"""
-    pet_id = request.args.get('pet_id', type=int)
-    
-    readiness = ai_manager.check_training_readiness(pet_id=pet_id)
-    
-    return jsonify(readiness)
-
-@app.route('/api/ai/train', methods=['POST'])
-def train_ai_models():
-    """Train all AI models"""
-    data = request.json or {}
-    pet_id = data.get('pet_id')
-    force = data.get('force', False)
-    
-    logger.info(f"Training AI models for pet_id={pet_id}")
-    
-    results = ai_manager.train_all_models(pet_id=pet_id, force=force)
-    
-    return jsonify(results)
-
-@app.route('/api/ai/predict/<int:pet_id>', methods=['GET'])
-def predict_next_feeding(pet_id):
-    """
-    AI prediction for next feeding time and amount
-    """
-    try:
-        prediction = ai_manager.lstm_predictor.predict_next_feeding(pet_id)
-        
-        if prediction:
-            return jsonify({
-                'success': True,
-                'prediction': {
-                    'predicted_time': prediction['predicted_time'].isoformat(),
-                    'predicted_amount': prediction['predicted_amount'],
-                    'confidence': prediction['confidence'],
-                    'avg_interval_minutes': prediction['avg_interval_minutes']
-                }
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Not enough data for prediction'
-            }), 400
-    except Exception as e:
-        logger.error(f"Prediction error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/optimize/<int:pet_id>', methods=['POST'])
-def optimize_schedule(pet_id):
-    """
-    Generate and apply optimized feeding schedule
-    """
-    try:
-        schedules = ai_manager.optimize_and_update_schedule(pet_id)
-        
-        if schedules:
-            return jsonify({
-                'success': True,
-                'message': 'Schedule optimized',
-                'schedule': [{
-                    'id': s.id,
-                    'time': s.scheduled_time,
-                    'amount': s.food_amount,
-                    'is_ai_optimized': s.is_ai_optimized
-                } for s in schedules]
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Schedule optimization failed'
-            }), 400
-    except Exception as e:
-        logger.error(f"Optimization error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/analyze/<int:feeding_event_id>', methods=['GET'])
-def analyze_feeding(feeding_event_id):
-    """Analyze specific feeding event with AI"""
-    feeding_event = db_session.query(FeedingEvent).get(feeding_event_id)
-    
-    if not feeding_event:
-        return jsonify({'error': 'Feeding event not found'}), 404
-    
-    try:
-        analysis = ai_manager.analyze_feeding_event(feeding_event)
-        
-        return jsonify({
-            'success': True,
-            'analysis': analysis
-        })
-    except Exception as e:
-        logger.error(f"Analysis error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/insights/<int:pet_id>', methods=['GET'])
-def get_ai_insights(pet_id):
-    """Get comprehensive AI insights for a pet"""
-    days = request.args.get('days', 7, type=int)
-    
-    try:
-        insights = ai_manager.get_ai_insights(pet_id, days)
-        
-        # Convert datetime objects to strings for JSON serialization
-        if insights['predictions'] and 'predicted_time' in insights['predictions']:
-            insights['predictions']['predicted_time'] = insights['predictions']['predicted_time'].isoformat()
-        
-        insights['generated_at'] = insights['generated_at'].isoformat()
-        
-        return jsonify({
-            'success': True,
-            'insights': insights
-        })
-    except Exception as e:
-        logger.error(f"Insights error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/auto-analyze', methods=['POST'])
-def auto_analyze():
-    """Automatically analyze recent feedings and create alerts"""
-    data = request.json or {}
-    hours = data.get('hours', 24)
-    
-    try:
-        alerts_created = ai_manager.auto_analyze_recent_feedings(hours)
-        
-        return jsonify({
-            'success': True,
-            'alerts_created': alerts_created,
-            'message': f'Analyzed feedings from last {hours} hours'
-        })
-    except Exception as e:
-        logger.error(f"Auto-analysis error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/anomaly/detect', methods=['POST'])
-def detect_anomaly():
-    """Detect anomaly in feeding data"""
-    data = request.json
-    
-    if not data:
-        return jsonify({'error': 'No data provided'}), 400
-    
-    try:
-        result = ai_manager.anomaly_detector.detect_anomaly(data)
-        
-        if result:
-            return jsonify({
-                'success': True,
-                'result': result
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Anomaly detection failed'
-            }), 400
-    except Exception as e:
-        logger.error(f"Anomaly detection error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/ai/models/status', methods=['GET'])
-def get_models_status():
-    """Get status of all AI models"""
-    status = {
-        'lstm': {
-            'loaded': ai_manager.lstm_predictor.model is not None,
-            'type': 'Pattern Prediction (LSTM)'
-        },
-        'anomaly': {
-            'loaded': ai_manager.anomaly_detector.model is not None,
-            'type': 'Anomaly Detection (Isolation Forest)'
-        },
-        'schedule': {
-            'loaded': bool(ai_manager.schedule_optimizer.q_table),
-            'type': 'Schedule Optimization (Q-Learning)'
-        }
-    }
-    
-    return jsonify(status)
-
 # ==================== STATISTICS ENDPOINTS ====================
 
 @app.route('/api/stats/summary/<int:pet_id>', methods=['GET'])
@@ -558,7 +372,6 @@ def get_summary_stats(pet_id):
     if not pet:
         return jsonify({'error': 'Pet not found'}), 404
     
-    # Last 7 days stats
     week_ago = datetime.utcnow() - timedelta(days=7)
     
     total_feedings = db_session.query(func.count(FeedingEvent.id))\
@@ -587,26 +400,101 @@ def get_summary_stats(pet_id):
         'daily_target': pet.daily_food_target
     })
 
-# ==================== STARTUP ====================
+# ==================== AI ENDPOINTS ====================
+
+# Import AI manager only if available
+try:
+    from ai_manager import AIManager
+    ai_manager = AIManager(db_session)
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    logger.warning("AI modules not available - AI endpoints disabled")
+
+if AI_AVAILABLE:
+    @app.route('/api/ai/readiness', methods=['GET'])
+    def check_ai_readiness():
+        """Check if enough data is available for AI training"""
+        pet_id = request.args.get('pet_id', type=int)
+        readiness = ai_manager.check_training_readiness(pet_id=pet_id)
+        return jsonify(readiness)
+    
+    @app.route('/api/ai/train', methods=['POST'])
+    def train_ai_models():
+        """Train all AI models"""
+        data = request.json or {}
+        pet_id = data.get('pet_id')
+        force = data.get('force', False)
+        results = ai_manager.train_all_models(pet_id=pet_id, force=force)
+        return jsonify(results)
+    
+    @app.route('/api/ai/predict/<int:pet_id>', methods=['GET'])
+    def predict_next_feeding(pet_id):
+        """AI prediction for next feeding"""
+        try:
+            prediction = ai_manager.lstm_predictor.predict_next_feeding(pet_id)
+            if prediction:
+                return jsonify({
+                    'success': True,
+                    'prediction': {
+                        'predicted_time': prediction['predicted_time'].isoformat(),
+                        'predicted_amount': prediction['predicted_amount'],
+                        'confidence': prediction['confidence']
+                    }
+                })
+            else:
+                return jsonify({'success': False, 'message': 'Not enough data'}), 400
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+# ==================== HEALTH CHECK ====================
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat()
+        'mqtt_enabled': False,
+        'ai_available': AI_AVAILABLE,
+        'mode': 'no-mqtt',
+        'timestamp': datetime.utcnow().isoformat(),
+        'note': 'Running without MQTT - use /api/feeding/simulate for testing'
+    })
+
+@app.route('/api/info', methods=['GET'])
+def get_info():
+    """Get system information"""
+    return jsonify({
+        'version': '1.0',
+        'mode': 'no-mqtt',
+        'mqtt_enabled': False,
+        'ai_enabled': AI_AVAILABLE,
+        'features': {
+            'pet_management': True,
+            'manual_feeding': True,
+            'simulated_feeding': True,
+            'analytics': True,
+            'alerts': True,
+            'ai_training': AI_AVAILABLE,
+            'ai_prediction': AI_AVAILABLE,
+            'iot_communication': False
+        },
+        'endpoints': {
+            'simulate_feeding': '/api/feeding/simulate'
+        }
     })
 
 if __name__ == '__main__':
-    logger.info("Starting Pet Feeder System...")
-    
-    # Connect to MQTT broker
-    mqtt_client.connect()
+    logger.info("=" * 60)
+    logger.info("Starting Pet Feeder System (NO-MQTT MODE)")
+    logger.info("=" * 60)
+    logger.info("IoT features: DISABLED")
+    logger.info("AI features: " + ("ENABLED" if AI_AVAILABLE else "DISABLED"))
+    logger.info("Use /api/feeding/simulate to create test data")
+    logger.info("=" * 60)
     
     try:
-        # Start Flask server
         app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        mqtt_client.disconnect()
         db_session.close()
