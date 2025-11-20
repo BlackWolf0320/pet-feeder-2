@@ -18,10 +18,11 @@ DATA_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
 # Model file paths
-LSTM_MODEL_PATH = MODEL_DIR / 'feeding_pattern_lstm.h5'
-ANOMALY_MODEL_PATH = MODEL_DIR / 'anomaly_detector.pkl'
-RL_MODEL_PATH = MODEL_DIR / 'schedule_optimizer.pkl'
-SCALER_PATH = MODEL_DIR / 'data_scaler.pkl'
+# Model file paths (convert to strings for compatibility)
+LSTM_MODEL_PATH = str(MODEL_DIR / 'feeding_pattern_lstm.h5')
+ANOMALY_MODEL_PATH = str(MODEL_DIR / 'anomaly_detector.pkl')
+RL_MODEL_PATH = str(MODEL_DIR / 'schedule_optimizer.pkl')
+SCALER_PATH = str(MODEL_DIR / 'data_scaler.pkl')
 
 # Data requirements
 MIN_TRAINING_SAMPLES = 50  # Minimum feeding events needed for training
@@ -122,5 +123,5 @@ FEATURE_CONFIG = {
 LOGGING_CONFIG = {
     'level': 'INFO',
     'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    'file': LOGS_DIR / 'ai_models.log'
+    'file': str(LOGS_DIR / 'ai_models.log')
 }
